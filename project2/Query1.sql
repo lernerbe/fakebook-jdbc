@@ -1,0 +1,4 @@
+SELECT DISTINCT First_Name
+FROM Users
+WHERE LENGTH(First_Name) = (SELECT MAX(LENGTH(First_Name)) FROM Users)
+ORDER BY First_Name
