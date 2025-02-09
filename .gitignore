@@ -4,5 +4,9 @@
 # But do not ignore this file
 !StudentFakebookOracle.java
 
+# Allow tracking of the SQL_tests folder and its contents
+!SQL_tests/
+!SQL_tests/*.sql
+
 # Ensure .gitignore itself is not ignored
 !.gitignore
