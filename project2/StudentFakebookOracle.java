@@ -101,7 +101,7 @@ public final class StudentFakebookOracle extends FakebookOracle {
         }
     }
 
-    @Override
+  @Override
     // Query 1
     // -----------------------------------------------------------------------------------
     // GOALS: (A) The first name(s) with the most letters
@@ -111,26 +111,78 @@ public final class StudentFakebookOracle extends FakebookOracle {
     public FirstNameInfo findNameInfo() throws SQLException {
         try (Statement stmt = oracle.createStatement(FakebookOracleConstants.AllScroll,
                 FakebookOracleConstants.ReadOnly)) {
-            /*
-                EXAMPLE DATA STRUCTURE USAGE
-                ============================================
-                FirstNameInfo info = new FirstNameInfo();
-                info.addLongName("Aristophanes");
-                info.addLongName("Michelangelo");
-                info.addLongName("Peisistratos");
-                info.addShortName("Bob");
-                info.addShortName("Sue");
-                info.addCommonName("Harold");
-                info.addCommonName("Jessica");
-                info.setCommonNameCount(42);
-                return info;
-            */
-            return new FirstNameInfo(); // placeholder for compilation
+            FirstNameInfo info = new FirstNameInfo();
+            
+            // 1) Find the max len of first names
+            ResultSet rst = stmt.executeQuery(
+                "SELECT MAX(LENGTH(First_Name)) AS MaxLen " +
+                "FROM " + UsersTable);
+            int maxLen = 0;
+            if (rst.next()) {
+                maxLen = rst.getInt("MaxLen");
+            }
+
+            // find all distinct names with that max len
+            rst = stmt.executeQuery(
+                "SELECT DISTINCT First_Name " +
+                "FROM " + UsersTable + " " +
+                "WHERE LENGTH(First_Name) = " + maxLen + " " +
+                "ORDER BY First_Name");
+
+            while (rst.next()) {
+                info.addLongName(rst.getString("First_Name"));
+            }
+
+            // 2) Find min len of first names
+            rst = stmt.executeQuery(
+                "SELECT MIN(LENGTH(First_Name)) AS MinLen " +
+                "FROM " + UsersTable);
+            int minLen = 0;
+            if (rst.next()) {
+                minLen = rst.getInt("MinLen");
+            }
+
+            // find all distinct names w that min len
+            rst = stmt.executeQuery(
+                "SELECT DISTINCT First_Name " +
+                "FROM " + UsersTable + " " +
+                "WHERE LENGTH(First_Name) = " + minLen + " " +
+                "ORDER BY First_Name");
+            while (rst.next()) {
+                info.addShortName(rst.getString("First_Name"));
+            }
+
+            // 3) Find the most common first name(s) and count
+            rst = stmt.executeQuery(
+                "SELECT First_Name, COUNT(*) AS C " +
+                "FROM " + UsersTable + " " +
+                "GROUP BY First_Name " +
+                "ORDER BY C DESC, First_Name");
+            long maxCount = -1;
+            boolean firstRow = true;
+            while (rst.next()) {
+                long thisCount = rst.getLong("C");
+                if (firstRow) {
+                    maxCount = thisCount;
+                    firstRow = false;
+                }
+                if (thisCount == maxCount) {
+                    info.addCommonName(rst.getString("First_Name"));
+                } else {
+                    break;
+                }
+            }
+            rst.close();
+            if (maxCount > 0) {
+                info.setCommonNameCount(maxCount);
+            }
+            return info;
         } catch (SQLException e) {
             System.err.println(e.getMessage());
             return new FirstNameInfo();
         }
     }
+
 
     @Override
     // Query 2
