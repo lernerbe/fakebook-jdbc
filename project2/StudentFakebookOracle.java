@@ -206,13 +206,23 @@ public final class StudentFakebookOracle extends FakebookOracle {
             */
 
         // join users and friends to find no friends users
+        // ResultSet rst = stmt.executeQuery(
+        //             "SELECT DISTINCT u.User_ID, u.First_Name, u.Last_Name " + 
+        //                     "FROM " + UsersTable + " u " + 
+        //                     "LEFT JOIN " + FriendsTable + " f " +
+        //                     "ON u.User_ID = f.User1_ID OR u.User_ID = f.User2_ID " +
+        //                     "WHERE f.User1_ID IS NULL AND f.User2_ID IS NULL " + 
+        //                     "ORDER BY u.User_ID"); 
+
+
         ResultSet rst = stmt.executeQuery(
-                    "SELECT DISTINCT u.User_ID, u.First_Name, u.Last_Name " + 
-                            "FROM " + UsersTable + " u " + 
-                            "LEFT JOIN " + FriendsTable + " f " +
-                            "ON u.User_ID = f.User1_ID OR u.User_ID = f.User2_ID " +
-                            "WHERE f.User1_ID IS NULL AND f.User2_ID IS NULL " + 
-                            "ORDER BY u.User_ID"); 
+                    "SELECT User_ID, First_Name, Last_Name " +
+                   "FROM " + UsersTable + " u " +
+                   "WHERE NOT EXISTS ( " +
+                   "    SELECT 1 FROM " + FriendsTable + " f " +
+                   "    WHERE u.User_ID = f.User1_ID OR u.User_ID = f.User2_ID " +
+                   ") " +
+                   "ORDER BY User_ID");
 
         while (rst.next()) {
             results.add(new UserInfo(
@@ -297,14 +307,70 @@ public final class StudentFakebookOracle extends FakebookOracle {
                 results.add(tp);
             */
 
-
+            // (A) Find the IDs, links, and IDs and names of the containing album of the top
+            // <num> photos with the most tagged users
             
+            ResultSet photoResult = stmt.executeQuery(
+                "SELECT p.Photo_ID, p.Album_ID, p.Photo_Link, a.Album_Name, COUNT(t.User_ID) AS TagCount " +
+                "FROM " + PhotosTable + " p " +
+                "JOIN " + AlbumsTable + " a ON p.Album_ID = a.Album_ID " +
+                "JOIN " + TagsTable + " t ON p.Photo_ID = t.Photo_ID " +
+                "GROUP BY p.Photo_ID, p.Album_ID, p.Photo_Link, a.Album_Name " +
+                "ORDER BY TagCount DESC, p.Photo_ID ASC " +
+                "FETCH FIRST " + num + " ROWS ONLY");
+
+
+            // get the tagged users
+            ArrayList<Long> photoIDs = new ArrayList<>();
+            ArrayList<TaggedPhotoInfo> photoInfos = new ArrayList<>();
+
+            while (photoResult.next()) {
+                long photoID = photoResult.getLong("Photo_ID");
+                long albumID = photoResult.getLong("Album_ID");
+                String photoLink = photoResult.getString("Photo_Link");
+                String albumName = photoResult.getString("Album_Name");
+
+                // Create a PhotoInfo object
+                PhotoInfo photoInfo = new PhotoInfo(photoID, albumID, photoLink, albumName);
+                TaggedPhotoInfo taggedPhoto = new TaggedPhotoInfo(photoInfo);
+
+                // Store for later user retrieval
+                photoIDs.add(photoID);
+                photoInfos.add(taggedPhoto);
+            }
+
+            photoResult.close();
+
+            // Step 3: Retrieve tagged users for each photo
+            for (int i = 0; i < photoIDs.size(); i++) {
+                long photoID = photoIDs.get(i);
+                TaggedPhotoInfo taggedPhoto = photoInfos.get(i);
+
+                ResultSet userResult = stmt.executeQuery(
+                    "SELECT u.User_ID, u.First_Name, u.Last_Name " +
+                    "FROM " + TagsTable + " t " +
+                    "JOIN " + UsersTable + " u ON t.User_ID = u.User_ID " +
+                    "WHERE t.Photo_ID = " + photoID + " " +
+                    "ORDER BY u.User_ID ASC");
+
+                while (userResult.next()) {
+                    UserInfo user = new UserInfo(
+                        // user id, first name, last name
+                        userResult.getLong("User_ID"), userResult.getString("First_Name"), userResult.getString("Last_Name"));
+                        
+                    taggedPhoto.addTaggedUser(user);
+                }
+                userResult.close();
+                results.add(taggedPhoto);
+            }
+
         } catch (SQLException e) {
             System.err.println(e.getMessage());
         }
 
         return results;
     }
+
 
     @Override
     // Query 5
