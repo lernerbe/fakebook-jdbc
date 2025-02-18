@@ -310,17 +310,18 @@ public final class StudentFakebookOracle extends FakebookOracle {
             // (A) Find the IDs, links, and IDs and names of the containing album of the top
             // <num> photos with the most tagged users
             
+           // Step 1: Get top `num` photos based on the number of tagged users
             ResultSet photoResult = stmt.executeQuery(
-                "SELECT p.Photo_ID, p.Album_ID, p.Photo_Link, a.Album_Name, COUNT(t.User_ID) AS TagCount " +
-                "FROM " + PhotosTable + " p " +
-                "JOIN " + AlbumsTable + " a ON p.Album_ID = a.Album_ID " +
-                "JOIN " + TagsTable + " t ON p.Photo_ID = t.Photo_ID " +
-                "GROUP BY p.Photo_ID, p.Album_ID, p.Photo_Link, a.Album_Name " +
-                "ORDER BY TagCount DESC, p.Photo_ID ASC " +
-                "FETCH FIRST " + num + " ROWS ONLY");
+                "SELECT p.Photo_ID, p.Album_ID, p.Photo_Link, a.Album_Name, "
+            + "       COUNT(t.tag_subject_id) AS TagCount "
+            + "FROM " + PhotosTable + " p "
+            + "JOIN " + AlbumsTable + " a ON p.Album_ID = a.Album_ID "
+            + "JOIN " + TagsTable + " t ON p.Photo_ID = t.tag_photo_id "
+            + "GROUP BY p.Photo_ID, p.Album_ID, p.Photo_Link, a.Album_Name "
+            + "ORDER BY TagCount DESC, p.Photo_ID ASC "
+            + "FETCH FIRST " + num + " ROWS ONLY"
+            );
 
-
-            // get the tagged users
             ArrayList<Long> photoIDs = new ArrayList<>();
             ArrayList<TaggedPhotoInfo> photoInfos = new ArrayList<>();
 
@@ -330,46 +331,43 @@ public final class StudentFakebookOracle extends FakebookOracle {
                 String photoLink = photoResult.getString("Photo_Link");
                 String albumName = photoResult.getString("Album_Name");
 
-                // Create a PhotoInfo object
                 PhotoInfo photoInfo = new PhotoInfo(photoID, albumID, photoLink, albumName);
                 TaggedPhotoInfo taggedPhoto = new TaggedPhotoInfo(photoInfo);
 
-                // Store for later user retrieval
                 photoIDs.add(photoID);
                 photoInfos.add(taggedPhoto);
             }
-
             photoResult.close();
 
-            // Step 3: Retrieve tagged users for each photo
+            // Step 2: Retrieve tagged users for each photo
             for (int i = 0; i < photoIDs.size(); i++) {
                 long photoID = photoIDs.get(i);
                 TaggedPhotoInfo taggedPhoto = photoInfos.get(i);
 
                 ResultSet userResult = stmt.executeQuery(
-                    "SELECT u.User_ID, u.First_Name, u.Last_Name " +
-                    "FROM " + TagsTable + " t " +
-                    "JOIN " + UsersTable + " u ON t.User_ID = u.User_ID " +
-                    "WHERE t.Photo_ID = " + photoID + " " +
-                    "ORDER BY u.User_ID ASC");
+                    "SELECT u.User_ID, u.First_Name, u.Last_Name "
+                + "FROM " + TagsTable + " t "
+                + "JOIN " + UsersTable + " u ON t.tag_subject_id = u.User_ID "
+                + "WHERE t.tag_photo_id = " + photoID + " "
+                + "ORDER BY u.User_ID ASC"
+                );
 
                 while (userResult.next()) {
                     UserInfo user = new UserInfo(
-                        // user id, first name, last name
-                        userResult.getLong("User_ID"), userResult.getString("First_Name"), userResult.getString("Last_Name"));
-                        
+                        userResult.getLong("User_ID"),
+                        userResult.getString("First_Name"),
+                        userResult.getString("Last_Name")
+                    );
                     taggedPhoto.addTaggedUser(user);
                 }
                 userResult.close();
                 results.add(taggedPhoto);
             }
-
-        } catch (SQLException e) {
-            System.err.println(e.getMessage());
-        }
-
-        return results;
+    } catch (SQLException e) {
+        System.err.println(e.getMessage());
     }
+    return results;
+}
 
 
     @Override
@@ -399,6 +397,7 @@ public final class StudentFakebookOracle extends FakebookOracle {
                 mp.addSharedPhoto(p);
                 results.add(mp);
             */
+
         } catch (SQLException e) {
             System.err.println(e.getMessage());
         }
@@ -429,6 +428,84 @@ public final class StudentFakebookOracle extends FakebookOracle {
                 up.addSharedFriend(u3);
                 results.add(up);
             */
+
+        // step 1: make a subquery for the bidirectional friends usind  CE. 
+
+        ResultSet rst = stmt.executeQuery(
+            "WITH bd_friends AS ( " 
+          + "  SELECT user1_id AS user_id, user2_id AS friend_id FROM " + FriendsTable + " "
+          + "  UNION ALL "
+          + "  SELECT user2_id AS user_id, user1_id AS friend_id FROM " + FriendsTable + " "
+          + ") "
+          + "SELECT bd1.user_id AS User1_ID, u1.First_Name AS First1, u1.Last_Name AS Last1, "
+          + "       bd2.user_id AS User2_ID, u2.First_Name AS First2, u2.Last_Name AS Last2, "
+          + "       COUNT(*) AS MutualCount "
+          + "FROM bd_friends bd1 "
+          + "JOIN bd_friends bd2 "
+          + "  ON bd1.friend_id = bd2.friend_id "
+          + " AND bd1.user_id < bd2.user_id "  // each pair (u1,u2) only once
+          + "JOIN " + UsersTable + " u1 ON bd1.user_id = u1.User_ID "
+          + "JOIN " + UsersTable + " u2 ON bd2.user_id = u2.User_ID "
+          + "LEFT JOIN " + FriendsTable + " f " 
+          + "  ON ( (bd1.user_id = f.User1_ID AND bd2.user_id = f.User2_ID) "
+          + "       OR (bd1.user_id = f.User2_ID AND bd2.user_id = f.User1_ID) ) "
+          + "WHERE f.User1_ID IS NULL "         // not friends in either direction
+          + "GROUP BY bd1.user_id, u1.First_Name, u1.Last_Name, "
+          + "         bd2.user_id, u2.First_Name, u2.Last_Name "
+          + "ORDER BY MutualCount DESC, bd1.user_id ASC, bd2.user_id ASC "
+          + "FETCH FIRST " + num + " ROWS ONLY");
+
+        ArrayList<Long> topUser1IDs = new ArrayList<>();
+        ArrayList<Long> topUser2IDs = new ArrayList<>();
+        ArrayList<UsersPair> userPairs = new ArrayList<>();
+
+        while (rst.next()) {
+            long u1ID = rst.getLong("User1_ID");
+            long u2ID = rst.getLong("User2_ID");
+            UserInfo u1 = new UserInfo(u1ID, rst.getString("First1"), rst.getString("Last1"));
+            UserInfo u2 = new UserInfo(u2ID, rst.getString("First2"), rst.getString("Last2"));
+
+            UsersPair pair = new UsersPair(u1, u2);
+            userPairs.add(pair);
+
+            topUser1IDs.add(u1ID);
+            topUser2IDs.add(u2ID);
+        }
+        rst.close();
+
+        // Step 2: For each pair, find the actual mutual friends.
+
+        for (int i = 0; i < userPairs.size(); i++) {
+            long u1ID = topUser1IDs.get(i);
+            long u2ID = topUser2IDs.get(i);
+            UsersPair pair = userPairs.get(i);
+
+            ResultSet mutualRST = stmt.executeQuery(
+                    "WITH bd_friends AS ( "
+                + "  SELECT user1_id AS user_id, user2_id AS friend_id FROM " + FriendsTable + " "
+                + "  UNION ALL "
+                + "  SELECT user2_id AS user_id, user1_id AS friend_id FROM " + FriendsTable + " "
+                + ") "
+                + "SELECT u.User_ID, u.First_Name, u.Last_Name "
+                + "FROM bd_friends f1 "
+                + "JOIN bd_friends f2 ON f1.friend_id = f2.friend_id "
+                + "JOIN " + UsersTable + " u ON f1.friend_id = u.User_ID "
+                + "WHERE f1.user_id = " + u1ID
+                + "  AND f2.user_id = " + u2ID
+                + "ORDER BY u.User_ID ASC");
+
+
+                while (mutualRST.next()) {
+                    pair.addSharedFriend(new UserInfo(
+                        mutualRST.getLong("User_ID"),
+                        mutualRST.getString("First_Name"),
+                        mutualRST.getString("Last_Name")
+                    ));
+                }
+                mutualRST.close();
+                // Finally add to results
+                results.add(pair);
+            }
         } catch (SQLException e) {
             System.err.println(e.getMessage());
         }
