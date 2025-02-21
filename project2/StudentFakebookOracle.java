@@ -398,10 +398,91 @@ public final class StudentFakebookOracle extends FakebookOracle {
                 results.add(mp);
             */
 
+        // id, first, last, birth year
+        // 2 users in top <num> pairs of users that
+        // same gender, tagged in common photo, diff in birth year <= yearDiff, not friend
+        // find ids, links, ids, names of album of each photo tagged together
+        // users (1 and 2), friendstable, tags, photos
+        // bidirectional frienship
+        MatchPair newMatchPair = null;
+        long last1 = -1;
+        long last2 = -1; // check for same
+        
+        ResultSet rst = stmt.executeQuery(
+            "WITH bd_friends AS ( "  // define bidirectional friendship (same at 6)
+                + "  SELECT user1_id AS user_id, user2_id AS friend_id FROM " + FriendsTable + " "
+                + "  UNION "
+                + "  SELECT user2_id AS user_id, user1_id AS friend_id FROM " + FriendsTable + " "
+                + ") " 
+                + "SELECT user1.User_ID AS u1_ID, " // find vals needed
+                    + "user1.First_Name AS u1_First, "
+                    + "user1.Last_Name AS u1_Last, "
+                    + "user1.Year_Of_Birth AS u1_Year, "
+                    + "user2.User_ID AS u2_ID, "
+                    + "user2.First_Name AS u2_First, "
+                    + "user2.Last_Name AS u2_Last, "
+                    + "user2.Year_Of_Birth AS u2_Year, "
+                    + "p.Photo_ID, p.Photo_Link, p.Album_ID, a.Album_Name "
+                + "FROM " + UsersTable + " user1 " //users
+                + "JOIN " + UsersTable + " user2 "
+                + "ON user1.User_ID < user2.User_ID " 
+                + "JOIN " + TagsTable + " tag1 ON tag1.Tag_Subject_ID = user1.User_ID " //tags
+                + "JOIN " + TagsTable + " tag2 ON tag2.Tag_Subject_ID = user2.User_ID "
+                + "AND tag1.Tag_Photo_ID = tag2.Tag_Photo_ID " // same photo for both
+                + "JOIN " + PhotosTable + " p ON tag1.Tag_Photo_ID = p.Photo_ID " //photos
+                + "JOIN " + AlbumsTable + " a " //albums
+                + "ON p.Album_ID = a.Album_ID "
+                + "LEFT JOIN bd_friends b ON user1.User_ID = b.user_id " //bidirectional
+                + "AND user2.User_ID = b.friend_id "
+                + "WHERE ABS(user1.Year_Of_Birth - user2.Year_Of_Birth) <= " + yearDiff
+                + "AND user1.gender = user2.gender " // same gender
+                + "AND b.user_id IS NULL " 
+                + "ORDER BY u1_ID ASC, u2_ID ASC, p.Photo_ID ASC "
+                + "FETCH FIRST " + num + " ROWS ONLY"); //num
+
+        while (rst.next()) {
+            // get needed info from user1 and user2
+            long u1ID = rst.getLong("u1_ID");
+            long u2ID = rst.getLong("u2_ID");
+            // id, first, last, year
+
+            if (u1ID != last1 || u2ID != last2 || newMatchPair == null) {
+                //check not same
+                if (newMatchPair != null){ results.add(newMatchPair);}
+
+                String u1First = rst.getString("u1_First");
+                String u1Last = rst.getString("u1_Last");
+                String u2First = rst.getString("u2_First");
+                String u2Last = rst.getString("u2_Last");
+                long u1Year = rst.getLong("u1_Year");
+                long u2Year = rst.getLong("u2_Year");
+                // System.out.println(u1ID");
+                UserInfo u1 = new UserInfo(u1ID, u1First, u1Last);
+                UserInfo u2 = new UserInfo(u2ID, u2First, u2Last);
+                // new user infos u1 u2
+                last1 = u1ID;
+                last2 = u2ID; //update prev
+                // u1, u1 year, u2, u2 year
+                newMatchPair = new MatchPair(u1, u1Year, u2, u2Year);
+            }
+            if (newMatchPair != null) {
+                //get photo/album info
+                long AlbumID = rst.getLong("Album_ID");
+                String AlbumName = rst.getString("Album_Name");
+                long photoID = rst.getLong("Photo_ID");
+                String photoLink = rst.getString("Photo_Link");
+                // string not long - fix
+                // photo info - p id, a id, link, name
+                PhotoInfo newPhoto = new PhotoInfo(photoID, AlbumID, photoLink, AlbumName);
+                newMatchPair.addSharedPhoto(newPhoto);
+            }
+        } // end rst
+        rst.close();
+        if (newMatchPair != null) {results.add(newMatchPair);}
+        
         } catch (SQLException e) {
             System.err.println(e.getMessage());
         }
-
         return results;
     }
 
